@@ -21,14 +21,13 @@
  */
 
 #include <linux/module.h>
-#include <linux/init.h>
 #include <linux/irq.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
 #include <linux/leds.h>
-#include <mach/leds-netxbig.h>
+#include <linux/platform_data/leds-kirkwood-netxbig.h>
 
 /*
  * GPIO extension bus.
@@ -71,7 +70,7 @@ static void gpio_ext_set_value(struct netxbig_gpio_ext *gpio_ext,
 	spin_unlock_irqrestore(&gpio_ext_lock, flags);
 }
 
-static int __devinit gpio_ext_init(struct netxbig_gpio_ext *gpio_ext)
+static int gpio_ext_init(struct netxbig_gpio_ext *gpio_ext)
 {
 	int err;
 	int i;
@@ -243,7 +242,7 @@ static ssize_t netxbig_led_sata_store(struct device *dev,
 	int mode_val;
 	int ret;
 
-	ret = strict_strtoul(buff, 10, &enable);
+	ret = kstrtoul(buff, 10, &enable);
 	if (ret < 0)
 		return ret;
 
@@ -294,20 +293,23 @@ static ssize_t netxbig_led_sata_show(struct device *dev,
 
 static DEVICE_ATTR(sata, 0644, netxbig_led_sata_show, netxbig_led_sata_store);
 
+static struct attribute *netxbig_led_attrs[] = {
+	&dev_attr_sata.attr,
+	NULL
+};
+ATTRIBUTE_GROUPS(netxbig_led);
+
 static void delete_netxbig_led(struct netxbig_led_data *led_dat)
 {
-	if (led_dat->mode_val[NETXBIG_LED_SATA] != NETXBIG_LED_INVALID_MODE)
-		device_remove_file(led_dat->cdev.dev, &dev_attr_sata);
 	led_classdev_unregister(&led_dat->cdev);
 }
 
-static int __devinit
+static int
 create_netxbig_led(struct platform_device *pdev,
 		   struct netxbig_led_data *led_dat,
 		   const struct netxbig_led *template)
 {
-	struct netxbig_led_platform_data *pdata = pdev->dev.platform_data;
-	int ret;
+	struct netxbig_led_platform_data *pdata = dev_get_platdata(&pdev->dev);
 
 	spin_lock_init(&led_dat->lock);
 	led_dat->gpio_ext = pdata->gpio_ext;
@@ -328,6 +330,12 @@ create_netxbig_led(struct platform_device *pdev,
 	led_dat->sata = 0;
 	led_dat->cdev.brightness = LED_OFF;
 	led_dat->cdev.flags |= LED_CORE_SUSPENDRESUME;
+	/*
+	 * If available, expose the SATA activity blink capability through
+	 * a "sata" sysfs attribute.
+	 */
+	if (led_dat->mode_val[NETXBIG_LED_SATA] != NETXBIG_LED_INVALID_MODE)
+		led_dat->cdev.groups = netxbig_led_groups;
 	led_dat->mode_addr = template->mode_addr;
 	led_dat->mode_val = template->mode_val;
 	led_dat->bright_addr = template->bright_addr;
@@ -335,26 +343,12 @@ create_netxbig_led(struct platform_device *pdev,
 	led_dat->timer = pdata->timer;
 	led_dat->num_timer = pdata->num_timer;
 
-	ret = led_classdev_register(&pdev->dev, &led_dat->cdev);
-	if (ret < 0)
-		return ret;
-
-	/*
-	 * If available, expose the SATA activity blink capability through
-	 * a "sata" sysfs attribute.
-	 */
-	if (led_dat->mode_val[NETXBIG_LED_SATA] != NETXBIG_LED_INVALID_MODE) {
-		ret = device_create_file(led_dat->cdev.dev, &dev_attr_sata);
-		if (ret)
-			led_classdev_unregister(&led_dat->cdev);
-	}
-
-	return ret;
+	return led_classdev_register(&pdev->dev, &led_dat->cdev);
 }
 
-static int __devinit netxbig_led_probe(struct platform_device *pdev)
+static int netxbig_led_probe(struct platform_device *pdev)
 {
-	struct netxbig_led_platform_data *pdata = pdev->dev.platform_data;
+	struct netxbig_led_platform_data *pdata = dev_get_platdata(&pdev->dev);
 	struct netxbig_led_data *leds_data;
 	int i;
 	int ret;
@@ -389,9 +383,9 @@ err_free_leds:
 	return ret;
 }
 
-static int __devexit netxbig_led_remove(struct platform_device *pdev)
+static int netxbig_led_remove(struct platform_device *pdev)
 {
-	struct netxbig_led_platform_data *pdata = pdev->dev.platform_data;
+	struct netxbig_led_platform_data *pdata = dev_get_platdata(&pdev->dev);
 	struct netxbig_led_data *leds_data;
 	int i;
 
@@ -407,7 +401,7 @@ static int __devexit netxbig_led_remove(struct platform_device *pdev)
 
 static struct platform_driver netxbig_led_driver = {
 	.probe		= netxbig_led_probe,
-	.remove		= __devexit_p(netxbig_led_remove),
+	.remove		= netxbig_led_remove,
 	.driver		= {
 		.name	= "leds-netxbig",
 		.owner	= THIS_MODULE,

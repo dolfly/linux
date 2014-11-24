@@ -1111,6 +1111,7 @@ int lbs_set_radio(struct lbs_private *priv, u8 preamble, u8 radio_on)
 
 	cmd.hdr.size = cpu_to_le16(sizeof(cmd));
 	cmd.action = cpu_to_le16(CMD_ACT_SET);
+	cmd.control = 0;
 
 	/* Only v8 and below support setting the preamble */
 	if (priv->fwrelease < 0x09000000) {
@@ -1157,6 +1158,22 @@ void lbs_set_mac_control(struct lbs_private *priv)
 	lbs_cmd_async(priv, CMD_MAC_CONTROL, &cmd.hdr, sizeof(cmd));
 
 	lbs_deb_leave(LBS_DEB_CMD);
+}
+
+int lbs_set_mac_control_sync(struct lbs_private *priv)
+{
+	struct cmd_ds_mac_control cmd;
+	int ret = 0;
+
+	lbs_deb_enter(LBS_DEB_CMD);
+
+	cmd.hdr.size = cpu_to_le16(sizeof(cmd));
+	cmd.action = cpu_to_le16(priv->mac_control);
+	cmd.reserved = 0;
+	ret = lbs_cmd_with_response(priv, CMD_MAC_CONTROL, &cmd);
+
+	lbs_deb_leave(LBS_DEB_CMD);
+	return ret;
 }
 
 /**

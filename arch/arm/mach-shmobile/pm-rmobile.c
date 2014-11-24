@@ -17,17 +17,16 @@
 #include <linux/pm.h>
 #include <linux/pm_clock.h>
 #include <asm/io.h>
-#include <mach/pm-rmobile.h>
+#include "pm-rmobile.h"
 
 /* SYSC */
-#define SPDCR		0xe6180008
-#define SWUCR		0xe6180014
-#define PSTR		0xe6180080
+#define SPDCR		IOMEM(0xe6180008)
+#define SWUCR		IOMEM(0xe6180014)
+#define PSTR		IOMEM(0xe6180080)
 
 #define PSTR_RETRIES	100
 #define PSTR_DELAY_US	10
 
-#ifdef CONFIG_PM
 static int rmobile_pd_power_down(struct generic_pm_domain *genpd)
 {
 	struct rmobile_pm_domain *rmobile_pd = to_rmobile_pd(genpd);
@@ -99,69 +98,54 @@ static int rmobile_pd_power_up(struct generic_pm_domain *genpd)
 
 static bool rmobile_pd_active_wakeup(struct device *dev)
 {
-	bool (*active_wakeup)(struct device *dev);
-
-	active_wakeup = dev_gpd_data(dev)->ops.active_wakeup;
-	return active_wakeup ? active_wakeup(dev) : true;
+	return true;
 }
 
-static int rmobile_pd_stop_dev(struct device *dev)
-{
-	int (*stop)(struct device *dev);
-
-	stop = dev_gpd_data(dev)->ops.stop;
-	if (stop) {
-		int ret = stop(dev);
-		if (ret)
-			return ret;
-	}
-	return pm_clk_suspend(dev);
-}
-
-static int rmobile_pd_start_dev(struct device *dev)
-{
-	int (*start)(struct device *dev);
-	int ret;
-
-	ret = pm_clk_resume(dev);
-	if (ret)
-		return ret;
-
-	start = dev_gpd_data(dev)->ops.start;
-	if (start)
-		ret = start(dev);
-
-	return ret;
-}
-
-void rmobile_init_pm_domain(struct rmobile_pm_domain *rmobile_pd)
+static void rmobile_init_pm_domain(struct rmobile_pm_domain *rmobile_pd)
 {
 	struct generic_pm_domain *genpd = &rmobile_pd->genpd;
 	struct dev_power_governor *gov = rmobile_pd->gov;
 
 	pm_genpd_init(genpd, gov ? : &simple_qos_governor, false);
-	genpd->dev_ops.stop		= rmobile_pd_stop_dev;
-	genpd->dev_ops.start		= rmobile_pd_start_dev;
+	genpd->dev_ops.stop		= pm_clk_suspend;
+	genpd->dev_ops.start		= pm_clk_resume;
 	genpd->dev_ops.active_wakeup	= rmobile_pd_active_wakeup;
-	genpd->dev_irq_safe		= true;
 	genpd->power_off		= rmobile_pd_power_down;
 	genpd->power_on			= rmobile_pd_power_up;
 	__rmobile_pd_power_up(rmobile_pd, false);
 }
 
-void rmobile_add_device_to_domain(struct rmobile_pm_domain *rmobile_pd,
-				 struct platform_device *pdev)
+void rmobile_init_domains(struct rmobile_pm_domain domains[], int num)
+{
+	int j;
+
+	for (j = 0; j < num; j++)
+		rmobile_init_pm_domain(&domains[j]);
+}
+
+void rmobile_add_device_to_domain_td(const char *domain_name,
+				     struct platform_device *pdev,
+				     struct gpd_timing_data *td)
 {
 	struct device *dev = &pdev->dev;
 
-	pm_genpd_add_device(&rmobile_pd->genpd, dev);
+	__pm_genpd_name_add_device(domain_name, dev, td);
 	if (pm_clk_no_clocks(dev))
 		pm_clk_add(dev, NULL);
 }
 
-void rmobile_pm_add_subdomain(struct rmobile_pm_domain *rmobile_pd,
-			     struct rmobile_pm_domain *rmobile_sd)
+void rmobile_add_devices_to_domains(struct pm_domain_device data[],
+				    int size)
 {
-	pm_genpd_add_subdomain(&rmobile_pd->genpd, &rmobile_sd->genpd);
+	struct gpd_timing_data latencies = {
+		.stop_latency_ns = DEFAULT_DEV_LATENCY_NS,
+		.start_latency_ns = DEFAULT_DEV_LATENCY_NS,
+		.save_state_latency_ns = DEFAULT_DEV_LATENCY_NS,
+		.restore_state_latency_ns = DEFAULT_DEV_LATENCY_NS,
+	};
+	int j;
+
+	for (j = 0; j < size; j++)
+		rmobile_add_device_to_domain_td(data[j].domain_name,
+						data[j].pdev, &latencies);
 }
-#endif /* CONFIG_PM */

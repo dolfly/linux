@@ -166,15 +166,10 @@ static int do_commit(struct ubifs_info *c)
 	err = ubifs_orphan_end_commit(c);
 	if (err)
 		goto out;
-	old_ltail_lnum = c->ltail_lnum;
-	err = ubifs_log_end_commit(c, new_ltail_lnum);
-	if (err)
-		goto out;
 	err = dbg_check_old_index(c, &zroot);
 	if (err)
 		goto out;
 
-	mutex_lock(&c->mst_mutex);
 	c->mst_node->cmt_no      = cpu_to_le64(c->cmt_no);
 	c->mst_node->log_lnum    = cpu_to_le32(new_ltail_lnum);
 	c->mst_node->root_lnum   = cpu_to_le32(zroot.lnum);
@@ -203,8 +198,9 @@ static int do_commit(struct ubifs_info *c)
 		c->mst_node->flags |= cpu_to_le32(UBIFS_MST_NO_ORPHS);
 	else
 		c->mst_node->flags &= ~cpu_to_le32(UBIFS_MST_NO_ORPHS);
-	err = ubifs_write_master(c);
-	mutex_unlock(&c->mst_mutex);
+
+	old_ltail_lnum = c->ltail_lnum;
+	err = ubifs_log_end_commit(c, new_ltail_lnum);
 	if (err)
 		goto out;
 
@@ -293,8 +289,8 @@ int ubifs_bg_thread(void *info)
 	int err;
 	struct ubifs_info *c = info;
 
-	dbg_msg("background thread \"%s\" started, PID %d",
-		c->bgt_name, current->pid);
+	ubifs_msg("background thread \"%s\" started, PID %d",
+		  c->bgt_name, current->pid);
 	set_freezable();
 
 	while (1) {
@@ -328,7 +324,7 @@ int ubifs_bg_thread(void *info)
 		cond_resched();
 	}
 
-	dbg_msg("background thread \"%s\" stops", c->bgt_name);
+	ubifs_msg("background thread \"%s\" stops", c->bgt_name);
 	return 0;
 }
 
@@ -514,7 +510,7 @@ struct idx_node {
 	struct list_head list;
 	int iip;
 	union ubifs_key upper_key;
-	struct ubifs_idx_node idx __attribute__((aligned(8)));
+	struct ubifs_idx_node idx __aligned(8);
 };
 
 /**

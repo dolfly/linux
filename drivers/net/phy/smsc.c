@@ -44,6 +44,7 @@ static int smsc_phy_ack_interrupt(struct phy_device *phydev)
 static int smsc_phy_config_init(struct phy_device *phydev)
 {
 	int rc = phy_read(phydev, MII_LAN83C185_CTRL_STATUS);
+
 	if (rc < 0)
 		return rc;
 
@@ -53,12 +54,83 @@ static int smsc_phy_config_init(struct phy_device *phydev)
 	if (rc < 0)
 		return rc;
 
-	return smsc_phy_ack_interrupt (phydev);
+	return smsc_phy_ack_interrupt(phydev);
+}
+
+static int smsc_phy_reset(struct phy_device *phydev)
+{
+	int rc = phy_read(phydev, MII_LAN83C185_SPECIAL_MODES);
+	if (rc < 0)
+		return rc;
+
+	/* If the SMSC PHY is in power down mode, then set it
+	 * in all capable mode before using it.
+	 */
+	if ((rc & MII_LAN83C185_MODE_MASK) == MII_LAN83C185_MODE_POWERDOWN) {
+		int timeout = 50000;
+
+		/* set "all capable" mode and reset the phy */
+		rc |= MII_LAN83C185_MODE_ALL;
+		phy_write(phydev, MII_LAN83C185_SPECIAL_MODES, rc);
+		phy_write(phydev, MII_BMCR, BMCR_RESET);
+
+		/* wait end of reset (max 500 ms) */
+		do {
+			udelay(10);
+			if (timeout-- == 0)
+				return -1;
+			rc = phy_read(phydev, MII_BMCR);
+		} while (rc & BMCR_RESET);
+	}
+	return 0;
 }
 
 static int lan911x_config_init(struct phy_device *phydev)
 {
 	return smsc_phy_ack_interrupt(phydev);
+}
+
+/*
+ * The LAN8710/LAN8720 requires a minimum of 2 link pulses within 64ms of each
+ * other in order to set the ENERGYON bit and exit EDPD mode.  If a link partner
+ * does send the pulses within this interval, the PHY will remained powered
+ * down.
+ *
+ * This workaround will manually toggle the PHY on/off upon calls to read_status
+ * in order to generate link test pulses if the link is down.  If a link partner
+ * is present, it will respond to the pulses, which will cause the ENERGYON bit
+ * to be set and will cause the EDPD mode to be exited.
+ */
+static int lan87xx_read_status(struct phy_device *phydev)
+{
+	int err = genphy_read_status(phydev);
+
+	if (!phydev->link) {
+		/* Disable EDPD to wake up PHY */
+		int rc = phy_read(phydev, MII_LAN83C185_CTRL_STATUS);
+		if (rc < 0)
+			return rc;
+
+		rc = phy_write(phydev, MII_LAN83C185_CTRL_STATUS,
+			       rc & ~MII_LAN83C185_EDPWRDOWN);
+		if (rc < 0)
+			return rc;
+
+		/* Sleep 64 ms to allow ~5 link test pulses to be sent */
+		msleep(64);
+
+		/* Re-enable EDPD */
+		rc = phy_read(phydev, MII_LAN83C185_CTRL_STATUS);
+		if (rc < 0)
+			return rc;
+
+		rc = phy_write(phydev, MII_LAN83C185_CTRL_STATUS,
+			       rc | MII_LAN83C185_EDPWRDOWN);
+		if (rc < 0)
+			return rc;
+	}
+
+	return err;
 }
 
 static struct phy_driver smsc_phy_driver[] = {
@@ -75,6 +147,7 @@ static struct phy_driver smsc_phy_driver[] = {
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= genphy_read_status,
 	.config_init	= smsc_phy_config_init,
+	.soft_reset	= smsc_phy_reset,
 
 	/* IRQ related */
 	.ack_interrupt	= smsc_phy_ack_interrupt,
@@ -97,6 +170,7 @@ static struct phy_driver smsc_phy_driver[] = {
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= genphy_read_status,
 	.config_init	= smsc_phy_config_init,
+	.soft_reset	= smsc_phy_reset,
 
 	/* IRQ related */
 	.ack_interrupt	= smsc_phy_ack_interrupt,
@@ -119,6 +193,7 @@ static struct phy_driver smsc_phy_driver[] = {
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= genphy_read_status,
 	.config_init	= smsc_phy_config_init,
+	.soft_reset	= smsc_phy_reset,
 
 	/* IRQ related */
 	.ack_interrupt	= smsc_phy_ack_interrupt,
@@ -161,8 +236,9 @@ static struct phy_driver smsc_phy_driver[] = {
 
 	/* basic functions */
 	.config_aneg	= genphy_config_aneg,
-	.read_status	= genphy_read_status,
+	.read_status	= lan87xx_read_status,
 	.config_init	= smsc_phy_config_init,
+	.soft_reset	= smsc_phy_reset,
 
 	/* IRQ related */
 	.ack_interrupt	= smsc_phy_ack_interrupt,
@@ -182,8 +258,7 @@ static int __init smsc_init(void)
 
 static void __exit smsc_exit(void)
 {
-	return phy_drivers_unregister(smsc_phy_driver,
-		ARRAY_SIZE(smsc_phy_driver));
+	phy_drivers_unregister(smsc_phy_driver, ARRAY_SIZE(smsc_phy_driver));
 }
 
 MODULE_DESCRIPTION("SMSC PHY driver");

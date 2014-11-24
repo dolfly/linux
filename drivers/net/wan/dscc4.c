@@ -699,16 +699,13 @@ static void dscc4_free1(struct pci_dev *pdev)
 	for (i = 0; i < dev_per_card; i++)
 		unregister_hdlc_device(dscc4_to_dev(root + i));
 
-	pci_set_drvdata(pdev, NULL);
-
 	for (i = 0; i < dev_per_card; i++)
 		free_netdev(root[i].dev);
 	kfree(root);
 	kfree(ppriv);
 }
 
-static int __devinit dscc4_init_one(struct pci_dev *pdev,
-				  const struct pci_device_id *ent)
+static int dscc4_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct dscc4_pci_priv *priv;
 	struct dscc4_dev_priv *dpriv;
@@ -1968,7 +1965,7 @@ err_out:
 	return -ENOMEM;
 }
 
-static void __devexit dscc4_remove_one(struct pci_dev *pdev)
+static void dscc4_remove_one(struct pci_dev *pdev)
 {
 	struct dscc4_pci_priv *ppriv;
 	struct dscc4_dev_priv *root;
@@ -2042,7 +2039,7 @@ static int __init dscc4_setup(char *str)
 __setup("dscc4.setup=", dscc4_setup);
 #endif
 
-static DEFINE_PCI_DEVICE_TABLE(dscc4_pci_tbl) = {
+static const struct pci_device_id dscc4_pci_tbl[] = {
 	{ PCI_VENDOR_ID_SIEMENS, PCI_DEVICE_ID_SIEMENS_DSCC4,
 	        PCI_ANY_ID, PCI_ANY_ID, },
 	{ 0,}
@@ -2053,7 +2050,7 @@ static struct pci_driver dscc4_driver = {
 	.name		= DRV_NAME,
 	.id_table	= dscc4_pci_tbl,
 	.probe		= dscc4_init_one,
-	.remove		= __devexit_p(dscc4_remove_one),
+	.remove		= dscc4_remove_one,
 };
 
 module_pci_driver(dscc4_driver);

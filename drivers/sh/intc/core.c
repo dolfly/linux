@@ -80,12 +80,6 @@ static void __init intc_register_irq(struct intc_desc *desc,
 	unsigned int data[2], primary;
 	unsigned long flags;
 
-	/*
-	 * Register the IRQ position with the global IRQ map, then insert
-	 * it in to the radix tree.
-	 */
-	irq_reserve_irq(irq);
-
 	raw_spin_lock_irqsave(&intc_big_lock, flags);
 	radix_tree_insert(&d->tree, enum_id, intc_irq_xlate_get(irq));
 	raw_spin_unlock_irqrestore(&intc_big_lock, flags);
@@ -355,7 +349,7 @@ int __init register_intc_controller(struct intc_desc *desc)
 			if (unlikely(res)) {
 				if (res == -EEXIST) {
 					res = irq_domain_associate(d->domain,
-								   irq, irq);
+								   irq2, irq2);
 					if (unlikely(res)) {
 						pr_err("domain association "
 						       "failure\n");

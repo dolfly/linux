@@ -59,7 +59,6 @@ ENTRY(startup_continue)
 	.long	0			# cr13: home space segment table
 	.long	0xc0000000		# cr14: machine check handling off
 	.long	0			# cr15: linkage stack operations
-.Lmchunk:.long	memory_chunk
 .Lbss_bgn:  .long __bss_start
 .Lbss_end:  .long _end
 .Lparmaddr: .long PARMAREA
@@ -78,10 +77,7 @@ ENTRY(startup_continue)
 
 ENTRY(_ehead)
 
-#ifdef CONFIG_SHARED_KERNEL
 	.org	0x100000 - 0x11000	# head.o ends at 0x11000
-#endif
-
 #
 # startup-code, running in absolute addressing mode
 #

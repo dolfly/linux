@@ -26,13 +26,14 @@
 #include <linux/pci.h>
 #include "stmmac.h"
 
-struct plat_stmmacenet_data plat_dat;
-struct stmmac_mdio_bus_data mdio_data;
-struct stmmac_dma_cfg dma_cfg;
+static struct plat_stmmacenet_data plat_dat;
+static struct stmmac_mdio_bus_data mdio_data;
+static struct stmmac_dma_cfg dma_cfg;
 
 static void stmmac_default_data(void)
 {
 	memset(&plat_dat, 0, sizeof(struct plat_stmmacenet_data));
+
 	plat_dat.bus_id = 1;
 	plat_dat.phy_addr = 0;
 	plat_dat.interface = PHY_INTERFACE_MODE_GMII;
@@ -40,7 +41,6 @@ static void stmmac_default_data(void)
 	plat_dat.has_gmac = 1;
 	plat_dat.force_sf_dma_mode = 1;
 
-	mdio_data.bus_id = 1;
 	mdio_data.phy_reset = NULL;
 	mdio_data.phy_mask = 0;
 	plat_dat.mdio_bus_data = &mdio_data;
@@ -48,6 +48,12 @@ static void stmmac_default_data(void)
 	dma_cfg.pbl = 32;
 	dma_cfg.burst_len = DMA_AXI_BLEN_256;
 	plat_dat.dma_cfg = &dma_cfg;
+
+	/* Set default value for multicast hash bins */
+	plat_dat.multicast_filter_bins = HASH_TABLE_SIZE;
+
+	/* Set default value for unicast filter entries */
+	plat_dat.unicast_filter_entries = 1;
 }
 
 /**
@@ -62,8 +68,8 @@ static void stmmac_default_data(void)
  * matches the device. The probe functions returns zero when the driver choose
  * to take "ownership" of the device or an error code(-ve no) otherwise.
  */
-static int __devinit stmmac_pci_probe(struct pci_dev *pdev,
-				      const struct pci_device_id *id)
+static int stmmac_pci_probe(struct pci_dev *pdev,
+			    const struct pci_device_id *id)
 {
 	int ret = 0;
 	void __iomem *addr = NULL;
@@ -89,7 +95,7 @@ static int __devinit stmmac_pci_probe(struct pci_dev *pdev,
 			continue;
 		addr = pci_iomap(pdev, i, 0);
 		if (addr == NULL) {
-			pr_err("%s: ERROR: cannot map register memory, aborting",
+			pr_err("%s: ERROR: cannot map register memory aborting",
 			       __func__);
 			ret = -EIO;
 			goto err_out_map_failed;
@@ -101,8 +107,9 @@ static int __devinit stmmac_pci_probe(struct pci_dev *pdev,
 	stmmac_default_data();
 
 	priv = stmmac_dvr_probe(&(pdev->dev), &plat_dat, addr);
-	if (!priv) {
+	if (IS_ERR(priv)) {
 		pr_err("%s: main driver probe failed", __func__);
+		ret = PTR_ERR(priv);
 		goto err_out;
 	}
 	priv->dev->irq = pdev->irq;
@@ -131,14 +138,13 @@ err_out_req_reg_failed:
  * Description: this function calls the main to free the net resources
  * and releases the PCI resources.
  */
-static void __devexit stmmac_pci_remove(struct pci_dev *pdev)
+static void stmmac_pci_remove(struct pci_dev *pdev)
 {
 	struct net_device *ndev = pci_get_drvdata(pdev);
 	struct stmmac_priv *priv = netdev_priv(ndev);
 
 	stmmac_dvr_remove(ndev);
 
-	pci_set_drvdata(pdev, NULL);
 	pci_iounmap(pdev, priv->ioaddr);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
@@ -171,7 +177,7 @@ static int stmmac_pci_resume(struct pci_dev *pdev)
 #define STMMAC_VENDOR_ID 0x700
 #define STMMAC_DEVICE_ID 0x1108
 
-static DEFINE_PCI_DEVICE_TABLE(stmmac_id_table) = {
+static const struct pci_device_id stmmac_id_table[] = {
 	{PCI_DEVICE(STMMAC_VENDOR_ID, STMMAC_DEVICE_ID)},
 	{PCI_DEVICE(PCI_VENDOR_ID_STMICRO, PCI_DEVICE_ID_STMICRO_MAC)},
 	{}
@@ -183,7 +189,7 @@ struct pci_driver stmmac_pci_driver = {
 	.name = STMMAC_RESOURCE_NAME,
 	.id_table = stmmac_id_table,
 	.probe = stmmac_pci_probe,
-	.remove = __devexit_p(stmmac_pci_remove),
+	.remove = stmmac_pci_remove,
 #ifdef CONFIG_PM
 	.suspend = stmmac_pci_suspend,
 	.resume = stmmac_pci_resume,

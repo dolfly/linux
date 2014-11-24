@@ -156,9 +156,18 @@
 
 #define TSI721_IBWIN_NUM	8
 
-#define TSI721_IBWINLB(x)	(0x29000 + (x) * 0x20)
-#define TSI721_IBWINLB_BA	0xfffff000
-#define TSI721_IBWINLB_WEN	0x00000001
+#define TSI721_IBWIN_LB(x)	(0x29000 + (x) * 0x20)
+#define TSI721_IBWIN_LB_BA	0xfffff000
+#define TSI721_IBWIN_LB_WEN	0x00000001
+
+#define TSI721_IBWIN_UB(x)	(0x29004 + (x) * 0x20)
+#define TSI721_IBWIN_SZ(x)	(0x29008 + (x) * 0x20)
+#define TSI721_IBWIN_SZ_SIZE	0x00001f00
+#define TSI721_IBWIN_SIZE(size)	(__fls(size) - 12)
+
+#define TSI721_IBWIN_TLA(x)	(0x2900c + (x) * 0x20)
+#define TSI721_IBWIN_TLA_ADD	0xfffff000
+#define TSI721_IBWIN_TUA(x)	(0x29010 + (x) * 0x20)
 
 #define TSI721_SR2PC_GEN_INTE	0x29800
 #define TSI721_SR2PC_PWE	0x29804
@@ -635,23 +644,26 @@ enum tsi721_smsg_int_flag {
 
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
 
+#define TSI721_BDMA_MAX_BCOUNT	(TSI721_DMAD_BCOUNT1 + 1)
+
 struct tsi721_tx_desc {
 	struct dma_async_tx_descriptor	txd;
-	struct tsi721_dma_desc		*hw_desc;
 	u16				destid;
 	/* low 64-bits of 66-bit RIO address */
 	u64				rio_addr;
 	/* upper 2-bits of 66-bit RIO address */
 	u8				rio_addr_u;
-	bool				interrupt;
+	enum dma_rtype			rtype;
 	struct list_head		desc_node;
-	struct list_head		tx_list;
+	struct scatterlist		*sg;
+	unsigned int			sg_len;
+	enum dma_status			status;
 };
 
 struct tsi721_bdma_chan {
 	int		id;
 	void __iomem	*regs;
-	int		bd_num;		/* number of buffer descriptors */
+	int		bd_num;		/* number of HW buffer descriptors */
 	void		*bd_base;	/* start of DMA descriptors */
 	dma_addr_t	bd_phys;
 	void		*sts_base;	/* start of DMA BD status FIFO */
@@ -667,8 +679,8 @@ struct tsi721_bdma_chan {
 	struct list_head	active_list;
 	struct list_head	queue;
 	struct list_head	free_list;
-	dma_cookie_t		completed_cookie;
 	struct tasklet_struct	tasklet;
+	bool			active;
 };
 
 #endif /* CONFIG_RAPIDIO_DMA_ENGINE */
@@ -837,7 +849,7 @@ struct tsi721_device {
 
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
 extern void tsi721_bdma_handler(struct tsi721_bdma_chan *bdma_chan);
-extern int __devinit tsi721_register_dma(struct tsi721_device *priv);
+extern int tsi721_register_dma(struct tsi721_device *priv);
 #endif
 
 #endif

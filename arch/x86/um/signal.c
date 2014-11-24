@@ -11,8 +11,8 @@
 #include <asm/unistd.h>
 #include <asm/uaccess.h>
 #include <asm/ucontext.h>
-#include "frame_kern.h"
-#include "skas.h"
+#include <frame_kern.h>
+#include <skas.h>
 
 #ifdef CONFIG_X86_32
 
@@ -342,9 +342,7 @@ static int copy_ucontext_to_user(struct ucontext __user *uc,
 {
 	int err = 0;
 
-	err |= put_user(current->sas_ss_sp, &uc->uc_stack.ss_sp);
-	err |= put_user(sas_ss_flags(sp), &uc->uc_stack.ss_flags);
-	err |= put_user(current->sas_ss_size, &uc->uc_stack.ss_size);
+	err |= __save_altstack(&uc->uc_stack, sp);
 	err |= copy_sc_to_user(&uc->uc_mcontext, fp, &current->thread.regs, 0);
 	err |= copy_to_user(&uc->uc_sigmask, set, sizeof(*set));
 	return err;
@@ -372,13 +370,12 @@ struct rt_sigframe
 	char retcode[8];
 };
 
-int setup_signal_stack_sc(unsigned long stack_top, int sig,
-			  struct k_sigaction *ka, struct pt_regs *regs,
-			  sigset_t *mask)
+int setup_signal_stack_sc(unsigned long stack_top, struct ksignal *ksig,
+			  struct pt_regs *regs, sigset_t *mask)
 {
 	struct sigframe __user *frame;
 	void __user *restorer;
-	int err = 0;
+	int err = 0, sig = ksig->sig;
 
 	/* This is the same calculation as i386 - ((sp + 4) & 15) == 0 */
 	stack_top = ((stack_top + 4) & -16UL) - 4;
@@ -387,8 +384,8 @@ int setup_signal_stack_sc(unsigned long stack_top, int sig,
 		return 1;
 
 	restorer = frame->retcode;
-	if (ka->sa.sa_flags & SA_RESTORER)
-		restorer = ka->sa.sa_restorer;
+	if (ksig->ka.sa.sa_flags & SA_RESTORER)
+		restorer = ksig->ka.sa.sa_restorer;
 
 	err |= __put_user(restorer, &frame->pretcode);
 	err |= __put_user(sig, &frame->sig);
@@ -412,23 +409,19 @@ int setup_signal_stack_sc(unsigned long stack_top, int sig,
 		return err;
 
 	PT_REGS_SP(regs) = (unsigned long) frame;
-	PT_REGS_IP(regs) = (unsigned long) ka->sa.sa_handler;
+	PT_REGS_IP(regs) = (unsigned long) ksig->ka.sa.sa_handler;
 	PT_REGS_AX(regs) = (unsigned long) sig;
 	PT_REGS_DX(regs) = (unsigned long) 0;
 	PT_REGS_CX(regs) = (unsigned long) 0;
-
-	if ((current->ptrace & PT_DTRACE) && (current->ptrace & PT_PTRACED))
-		ptrace_notify(SIGTRAP);
 	return 0;
 }
 
-int setup_signal_stack_si(unsigned long stack_top, int sig,
-			  struct k_sigaction *ka, struct pt_regs *regs,
-			  siginfo_t *info, sigset_t *mask)
+int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
+			  struct pt_regs *regs, sigset_t *mask)
 {
 	struct rt_sigframe __user *frame;
 	void __user *restorer;
-	int err = 0;
+	int err = 0, sig = ksig->sig;
 
 	stack_top &= -8UL;
 	frame = (struct rt_sigframe __user *) stack_top - 1;
@@ -436,14 +429,14 @@ int setup_signal_stack_si(unsigned long stack_top, int sig,
 		return 1;
 
 	restorer = frame->retcode;
-	if (ka->sa.sa_flags & SA_RESTORER)
-		restorer = ka->sa.sa_restorer;
+	if (ksig->ka.sa.sa_flags & SA_RESTORER)
+		restorer = ksig->ka.sa.sa_restorer;
 
 	err |= __put_user(restorer, &frame->pretcode);
 	err |= __put_user(sig, &frame->sig);
 	err |= __put_user(&frame->info, &frame->pinfo);
 	err |= __put_user(&frame->uc, &frame->puc);
-	err |= copy_siginfo_to_user(&frame->info, info);
+	err |= copy_siginfo_to_user(&frame->info, &ksig->info);
 	err |= copy_ucontext_to_user(&frame->uc, &frame->fpstate, mask,
 					PT_REGS_SP(regs));
 
@@ -462,17 +455,14 @@ int setup_signal_stack_si(unsigned long stack_top, int sig,
 		return err;
 
 	PT_REGS_SP(regs) = (unsigned long) frame;
-	PT_REGS_IP(regs) = (unsigned long) ka->sa.sa_handler;
+	PT_REGS_IP(regs) = (unsigned long) ksig->ka.sa.sa_handler;
 	PT_REGS_AX(regs) = (unsigned long) sig;
 	PT_REGS_DX(regs) = (unsigned long) &frame->info;
 	PT_REGS_CX(regs) = (unsigned long) &frame->uc;
-
-	if ((current->ptrace & PT_DTRACE) && (current->ptrace & PT_PTRACED))
-		ptrace_notify(SIGTRAP);
 	return 0;
 }
 
-long sys_sigreturn(struct pt_regs *regs)
+long sys_sigreturn(void)
 {
 	unsigned long sp = PT_REGS_SP(&current->thread.regs);
 	struct sigframe __user *frame = (struct sigframe __user *)(sp - 8);
@@ -510,13 +500,11 @@ struct rt_sigframe
 	struct _fpstate fpstate;
 };
 
-int setup_signal_stack_si(unsigned long stack_top, int sig,
-			  struct k_sigaction *ka, struct pt_regs * regs,
-			  siginfo_t *info, sigset_t *set)
+int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
+			  struct pt_regs *regs, sigset_t *set)
 {
 	struct rt_sigframe __user *frame;
-	int err = 0;
-	struct task_struct *me = current;
+	int err = 0, sig = ksig->sig;
 
 	frame = (struct rt_sigframe __user *)
 		round_down(stack_top - sizeof(struct rt_sigframe), 16);
@@ -526,8 +514,8 @@ int setup_signal_stack_si(unsigned long stack_top, int sig,
 	if (!access_ok(VERIFY_WRITE, frame, sizeof(*frame)))
 		goto out;
 
-	if (ka->sa.sa_flags & SA_SIGINFO) {
-		err |= copy_siginfo_to_user(&frame->info, info);
+	if (ksig->ka.sa.sa_flags & SA_SIGINFO) {
+		err |= copy_siginfo_to_user(&frame->info, &ksig->info);
 		if (err)
 			goto out;
 	}
@@ -535,10 +523,7 @@ int setup_signal_stack_si(unsigned long stack_top, int sig,
 	/* Create the ucontext.  */
 	err |= __put_user(0, &frame->uc.uc_flags);
 	err |= __put_user(0, &frame->uc.uc_link);
-	err |= __put_user(me->sas_ss_sp, &frame->uc.uc_stack.ss_sp);
-	err |= __put_user(sas_ss_flags(PT_REGS_SP(regs)),
-			  &frame->uc.uc_stack.ss_flags);
-	err |= __put_user(me->sas_ss_size, &frame->uc.uc_stack.ss_size);
+	err |= __save_altstack(&frame->uc.uc_stack, PT_REGS_SP(regs));
 	err |= copy_sc_to_user(&frame->uc.uc_mcontext, &frame->fpstate, regs,
 			       set->sig[0]);
 	err |= __put_user(&frame->fpstate, &frame->uc.uc_mcontext.fpstate);
@@ -555,8 +540,8 @@ int setup_signal_stack_si(unsigned long stack_top, int sig,
 	 * already in userspace.
 	 */
 	/* x86-64 should always use SA_RESTORER. */
-	if (ka->sa.sa_flags & SA_RESTORER)
-		err |= __put_user(ka->sa.sa_restorer, &frame->pretcode);
+	if (ksig->ka.sa.sa_flags & SA_RESTORER)
+		err |= __put_user(ksig->ka.sa.sa_restorer, &frame->pretcode);
 	else
 		/* could use a vstub here */
 		return err;
@@ -582,13 +567,13 @@ int setup_signal_stack_si(unsigned long stack_top, int sig,
 	 */
 	PT_REGS_SI(regs) = (unsigned long) &frame->info;
 	PT_REGS_DX(regs) = (unsigned long) &frame->uc;
-	PT_REGS_IP(regs) = (unsigned long) ka->sa.sa_handler;
+	PT_REGS_IP(regs) = (unsigned long) ksig->ka.sa.sa_handler;
  out:
 	return err;
 }
 #endif
 
-long sys_rt_sigreturn(struct pt_regs *regs)
+long sys_rt_sigreturn(void)
 {
 	unsigned long sp = PT_REGS_SP(&current->thread.regs);
 	struct rt_sigframe __user *frame =
@@ -612,14 +597,3 @@ long sys_rt_sigreturn(struct pt_regs *regs)
 	force_sig(SIGSEGV, current);
 	return 0;
 }
-
-#ifdef CONFIG_X86_32
-long ptregs_sigreturn(void)
-{
-	return sys_sigreturn(NULL);
-}
-long ptregs_rt_sigreturn(void)
-{
-	return sys_rt_sigreturn(NULL);
-}
-#endif

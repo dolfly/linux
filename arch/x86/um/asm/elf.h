@@ -6,7 +6,7 @@
 #define __UM_ELF_X86_H
 
 #include <asm/user.h>
-#include "skas.h"
+#include <skas.h>
 
 #ifdef CONFIG_X86_32
 
@@ -216,6 +216,5 @@ extern long elf_aux_hwcap;
 #define ELF_HWCAP (elf_aux_hwcap)
 
 #define SET_PERSONALITY(ex) do ; while(0)
-#define __HAVE_ARCH_GATE_AREA 1
 
 #endif

@@ -104,6 +104,16 @@ void process_scan(char *data,
 			print2byte(*(uint16_t *)(data + channels[k].location),
 				   &channels[k]);
 			break;
+		case 4:
+			if (!channels[k].is_signed) {
+				uint32_t val = *(uint32_t *)
+					(data + channels[k].location);
+				printf("%05f ", ((float)val +
+						 channels[k].offset)*
+				       channels[k].scale);
+
+			}
+			break;
 		case 8:
 			if (channels[k].is_signed) {
 				int64_t val = *(int64_t *)
@@ -295,9 +305,12 @@ int main(int argc, char **argv)
 		read_size = read(fp,
 				 data,
 				 toread*scan_size);
-		if (read_size == -EAGAIN) {
-			printf("nothing available\n");
-			continue;
+		if (read_size < 0) {
+			if (errno == -EAGAIN) {
+				printf("nothing available\n");
+				continue;
+			} else
+				break;
 		}
 		for (i = 0; i < read_size/scan_size; i++)
 			process_scan(data + scan_size*i,

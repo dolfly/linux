@@ -12,10 +12,11 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/leds.h>
 #include <linux/list.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/rwsem.h>
-#include <linux/leds.h>
 #include "leds.h"
 
 DECLARE_RWSEM(leds_list_lock);
@@ -39,9 +40,11 @@ static void led_set_software_blink(struct led_classdev *led_cdev,
 	led_cdev->blink_delay_on = delay_on;
 	led_cdev->blink_delay_off = delay_off;
 
-	/* never on - don't blink */
-	if (!delay_on)
+	/* never on - just set to off */
+	if (!delay_on) {
+		__led_set_brightness(led_cdev, LED_OFF);
 		return;
+	}
 
 	/* never off - just set to brightness */
 	if (!delay_off) {
@@ -103,14 +106,40 @@ void led_blink_set_oneshot(struct led_classdev *led_cdev,
 }
 EXPORT_SYMBOL(led_blink_set_oneshot);
 
-void led_set_brightness(struct led_classdev *led_cdev,
-			enum led_brightness brightness)
+void led_stop_software_blink(struct led_classdev *led_cdev)
 {
-	/* stop and clear soft-blink timer */
 	del_timer_sync(&led_cdev->blink_timer);
 	led_cdev->blink_delay_on = 0;
 	led_cdev->blink_delay_off = 0;
+}
+EXPORT_SYMBOL_GPL(led_stop_software_blink);
+
+void led_set_brightness(struct led_classdev *led_cdev,
+			enum led_brightness brightness)
+{
+	/* delay brightness setting if need to stop soft-blink timer */
+	if (led_cdev->blink_delay_on || led_cdev->blink_delay_off) {
+		led_cdev->delayed_set_value = brightness;
+		schedule_work(&led_cdev->set_brightness_work);
+		return;
+	}
 
 	__led_set_brightness(led_cdev, brightness);
 }
 EXPORT_SYMBOL(led_set_brightness);
+
+int led_update_brightness(struct led_classdev *led_cdev)
+{
+	int ret = 0;
+
+	if (led_cdev->brightness_get) {
+		ret = led_cdev->brightness_get(led_cdev);
+		if (ret >= 0) {
+			led_cdev->brightness = ret;
+			return 0;
+		}
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL(led_update_brightness);
